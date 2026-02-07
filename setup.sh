@@ -80,7 +80,7 @@ install_system_packages() {
         apt)
             $SUDO apt-get update -qq
             $SUDO apt-get install -y \
-                build-essential curl wget git fd-find ripgrep jq tmux libfuse2 unzip
+                build-essential cmake curl wget git fd-find ripgrep jq tmux libfuse2 unzip
             # Create fd symlink if needed (Ubuntu installs as fdfind)
             if command -v fdfind &>/dev/null && ! command -v fd &>/dev/null; then
                 mkdir -p "$HOME/.local/bin"
@@ -89,18 +89,18 @@ install_system_packages() {
             ;;
         dnf)
             $SUDO dnf install -y \
-                gcc gcc-c++ make curl wget git fd-find ripgrep jq tmux fuse-libs unzip
+                gcc gcc-c++ make cmake curl wget git fd-find ripgrep jq tmux fuse-libs unzip
             ;;
         pacman)
             $SUDO pacman -S --needed --noconfirm \
-                base-devel curl wget git fd ripgrep jq tmux fuse2 unzip
+                base-devel cmake curl wget git fd ripgrep jq tmux fuse2 unzip
             ;;
         zypper)
             $SUDO zypper install -y \
-                gcc gcc-c++ make curl wget git fd ripgrep jq tmux libfuse2 unzip
+                gcc gcc-c++ make cmake curl wget git fd ripgrep jq tmux libfuse2 unzip
             ;;
         brew)
-            brew install curl wget git fd ripgrep jq tmux unzip
+            brew install cmake curl wget git fd ripgrep jq tmux unzip
             ;;
     esac
 
@@ -211,6 +211,25 @@ install_neovim() {
     success "neovim installed: $(nvim --version | head -1)"
 }
 
+install_et() {
+    if command -v et &>/dev/null; then
+        success "Eternal Terminal already installed"
+        return
+    fi
+    log "Installing Eternal Terminal from source..."
+    local tmp
+    tmp=$(mktemp -d)
+    git clone --recurse-submodules --depth 1 https://github.com/MisterTea/EternalTerminal.git "$tmp/EternalTerminal"
+    mkdir -p "$tmp/EternalTerminal/build"
+    cd "$tmp/EternalTerminal/build"
+    cmake ../
+    make
+    $SUDO make install
+    cd "$SCRIPT_DIR"
+    rm -rf "$tmp"
+    success "Eternal Terminal installed"
+}
+
 #===============================================================================
 # User-Space Installers (no sudo needed)
 #===============================================================================
@@ -243,18 +262,19 @@ install_rust_and_yazi() {
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path
         # shellcheck source=/dev/null
         source "$HOME/.cargo/env"
+        rustup update
         success "Rust installed: $(rustc --version)"
     else
         success "Rust already installed: $(rustc --version)"
     fi
 
-    # Install yazi
+    # Install yazi via yazi-build (installs both yazi-fm and yazi-cli)
     if command -v yazi &>/dev/null; then
         success "yazi already installed: $(yazi --version | head -1)"
         return
     fi
     log "Installing yazi (this may take a few minutes)..."
-    cargo install --locked yazi-fm yazi-cli
+    cargo install --force yazi-build
     success "yazi installed"
 }
 
@@ -376,6 +396,7 @@ main() {
     install_delta
     install_starship
     install_neovim
+    install_et
 
     # Phase 3: User-space tools
     install_uv
@@ -392,7 +413,7 @@ main() {
     # Phase 6: Verification
     log ""
     log "Verifying installations..."
-    for cmd in nvim just bat delta starship jq tmux uv fzf yazi; do
+    for cmd in nvim just bat delta starship et jq tmux uv fzf yazi; do
         if command -v "$cmd" &>/dev/null; then
             success "$cmd: $(command -v "$cmd")"
         else
