@@ -1,0 +1,39 @@
+# Custom Development Environment Configuration
+
+# PATH additions
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/bin:$PATH"
+
+# Environment
+export TERM=xterm-256color
+export EDITOR=nvim
+export VISUAL=nvim
+
+# Modern CLI tool aliases
+alias cat='bat --paging=never'
+alias catp='bat'
+alias grep='rg'
+alias find='fd'
+alias ls='ls --color=auto'
+alias ll='ls -alF'
+alias la='ls -A'
+alias l='ls -CF'
+alias vim='nvim'
+alias vi='nvim'
+alias y='yazi'
+
+# Git aliases
+alias gd='git diff'
+alias gds='git diff --staged'
+alias gl='git log --oneline -20'
+alias gs='git status'
+
+# Starship prompt
+eval "$(starship init bash)"
+
+# fzf integration
+[ -f ~/.fzf.bash ] && source ~/.fzf.bash
+
+# fd alias (Ubuntu names it fdfind)
+if command -v fdfind &> /dev/null && ! command -v fd &> /dev/null; then
+    alias fd='fdfind'
+fi
