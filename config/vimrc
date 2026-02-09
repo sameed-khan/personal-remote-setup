@@ -1,0 +1,62 @@
+" Keymaps
+let mapleader = "\\"
+let maplocalleader = "\\"
+
+" Split management
+nnoremap <Leader>wh :vsp<CR>
+nnoremap <Leader>wl :belowright vsp<CR>
+nnoremap <Leader>wj :belowright sp<CR>
+nnoremap <Leader>wk :sp<CR>
+nnoremap <Leader>wc :close<CR>
+nnoremap <Leader>wo :only<CR>
+
+nnoremap <C-h> <C-w>h
+nnoremap <C-j> <C-w>j
+nnoremap <C-k> <C-w>k
+nnoremap <C-l> <C-w>l
+
+inoremap jk <Esc>
+
+" Go across visual lines w/o altering relative number jump
+noremap <expr> j (v:count? 'j': 'gj')
+noremap <expr> k (v:count? 'k': 'gk')
+
+" Nice editor things
+syntax on
+set relativenumber
+set showmatch
+set ruler
+set smarttab
+set tabstop=4
+set shiftwidth=4
+
+" Visual options
+set guioptions-=m
+set guioptions-=T
+set guifont=MonaspiceNe\ Nerd\ Font\ Regular\ 11
+set cc=80
+
+" Configure tokyonight colorscheme (builtin in modern vim)
+" For older vim versions without tokyonight builtin, use a fallback
+try
+  colorscheme tokyonight
+  let g:tokyonight_style = 'storm'
+  let g:tokyonight_enable_italic = 1
+  let g:tokyonight_cursor = 'green'
+catch
+  " Fallback to default dark theme if tokyonight not available
+  colorscheme default
+  set background=dark
+endtry
+
+" Blinking line cursor vs block
+if &term =~ "xterm\\|.*color"
+	" Blinking bar in insert mode
+	let &t_SI = "\<Esc>[5 q"
+	let &t_EI = "\<Esc>[2 q"
+	let &t_ti .= "\<Esc>[2 q" " Set to block when vim starts
+	let &t_te .= "\<Esc>[ q"  " Restore cursor shape when vim exits
+endif
+
+" Blinking underline in Replace mode
+let &t_SR = "\<Esc>[3 q"

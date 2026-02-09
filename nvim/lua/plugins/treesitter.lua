@@ -39,48 +39,53 @@ return {
     event = { "BufReadPost", "BufNewFile" },
     dependencies = { "nvim-treesitter/nvim-treesitter" },
     config = function()
-      -- Configure textobjects select
-      require("nvim-treesitter-textobjects.select").setup({
-        lookahead = true,
-        keymaps = {
-          ["af"] = "@function.outer",
-          ["if"] = "@function.inner",
-          ["ac"] = "@class.outer",
-          ["ic"] = "@class.inner",
-          ["aa"] = "@parameter.outer",
-          ["ia"] = "@parameter.inner",
-          ["ai"] = "@conditional.outer",
-          ["ii"] = "@conditional.inner",
+      -- Use the new unified setup API
+      require("nvim-treesitter-textobjects").setup({
+        select = {
+          lookahead = true,
+          keymaps = {
+            ["af"] = "@function.outer",
+            ["if"] = "@function.inner",
+            ["ac"] = "@class.outer",
+            ["ic"] = "@class.inner",
+            ["aa"] = "@parameter.outer",
+            ["ia"] = "@parameter.inner",
+            ["ai"] = "@conditional.outer",
+            ["ii"] = "@conditional.inner",
+          },
+          selection_modes = {
+            ['@parameter.outer'] = 'v', -- charwise
+            ['@function.outer'] = 'V',  -- linewise
+            ['@class.outer'] = 'V',     -- linewise
+          },
         },
-      })
-
-      -- Configure textobjects move
-      require("nvim-treesitter-textobjects.move").setup({
-        set_jumps = true,
-        goto_next_start = {
-          ["]f"] = "@function.outer",
-          ["]c"] = "@class.outer",
-          ["]a"] = "@parameter.outer",
-          ["]i"] = "@conditional.outer",
-        },
-        goto_next_end = {
-          ["]F"] = "@function.outer",
-          ["]C"] = "@class.outer",
-        },
-        goto_previous_start = {
-          ["[f"] = "@function.outer",
-          ["[c"] = "@class.outer",
-          ["[a"] = "@parameter.outer",
-          ["[i"] = "@conditional.outer",
-        },
-        goto_previous_end = {
-          ["[F"] = "@function.outer",
-          ["[C"] = "@class.outer",
+        move = {
+          set_jumps = true,
+          goto_next_start = {
+            ["]f"] = "@function.outer",
+            ["]c"] = "@class.outer",
+            ["]a"] = "@parameter.outer",
+            ["]i"] = "@conditional.outer",
+          },
+          goto_next_end = {
+            ["]F"] = "@function.outer",
+            ["]C"] = "@class.outer",
+          },
+          goto_previous_start = {
+            ["[f"] = "@function.outer",
+            ["[c"] = "@class.outer",
+            ["[a"] = "@parameter.outer",
+            ["[i"] = "@conditional.outer",
+          },
+          goto_previous_end = {
+            ["[F"] = "@function.outer",
+            ["[C"] = "@class.outer",
+          },
         },
       })
 
       -- Make movements repeatable with ; and ,
-      local ts_repeat_move = require("nvim-treesitter-textobjects.repeat_move")
+      local ts_repeat_move = require("nvim-treesitter-textobjects.repeatable_move")
       vim.keymap.set({ "n", "x", "o" }, ";", ts_repeat_move.repeat_last_move_next)
       vim.keymap.set({ "n", "x", "o" }, ",", ts_repeat_move.repeat_last_move_previous)
     end,

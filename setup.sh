@@ -6,6 +6,9 @@
 # Usage: git clone <repo> && cd <repo> && ./setup.sh
 # Idempotent: safe to run multiple times.
 # After setup completes, you can delete this directory.
+#
+# NOTE: vim is the default editor ($EDITOR). Neovim is installed as an
+# optional editor but not set as default. Use 'nvim' to launch neovim.
 #===============================================================================
 
 set -euo pipefail
@@ -297,7 +300,8 @@ configure_git() {
     fi
 
     # Set tool preferences (idempotent)
-    git config --global core.editor nvim
+    # Note: Using vim as default editor, nvim is available but not the default
+    git config --global core.editor vim
     git config --global core.pager delta
     git config --global interactive.diffFilter "delta --color-only"
     git config --global delta.navigate true
@@ -318,7 +322,22 @@ deploy_configs() {
 
     mkdir -p "$HOME/.config" "$HOME/.local/bin"
 
-    # Neovim config
+    # Vim config
+    if [ -f "$HOME/.vimrc" ]; then
+        warn "Existing vim config found at ~/.vimrc"
+        read -rp "Overwrite? [y/N]: " overwrite
+        if [[ "$overwrite" =~ ^[Yy]$ ]]; then
+            cp "$SCRIPT_DIR/config/vimrc" "$HOME/.vimrc"
+            success "Vim config deployed to ~/.vimrc"
+        else
+            warn "Skipping vim config deployment"
+        fi
+    else
+        cp "$SCRIPT_DIR/config/vimrc" "$HOME/.vimrc"
+        success "Vim config deployed to ~/.vimrc"
+    fi
+
+    # Neovim config (optional, not the default editor)
     if [ -d "$HOME/.config/nvim" ]; then
         warn "Existing neovim config found at ~/.config/nvim"
         read -rp "Overwrite? [y/N]: " overwrite
@@ -413,7 +432,7 @@ main() {
     # Phase 6: Verification
     log ""
     log "Verifying installations..."
-    for cmd in nvim just bat delta starship et jq tmux uv fzf yazi; do
+    for cmd in vim nvim just bat delta starship et jq tmux uv fzf yazi; do
         if command -v "$cmd" &>/dev/null; then
             success "$cmd: $(command -v "$cmd")"
         else
@@ -424,6 +443,8 @@ main() {
     log ""
     log "=== Setup Complete ==="
     log "Restart your shell or run: source ~/.bashrc"
+    log "Default editor: vim (\$EDITOR=vim)"
+    log "Neovim is available at: $(command -v nvim 2>/dev/null || echo 'not installed')"
     log "You can now delete this directory: rm -rf $SCRIPT_DIR"
 }
 
