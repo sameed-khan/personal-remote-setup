@@ -50,3 +50,10 @@ fi
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+
+# Enterprise SSL certificates (Forcepoint)
+# Makes Node.js/npm trust the enterprise CA for SSL-inspected traffic.
+# The cert must be installed to the system CA store first (setup.sh handles this).
+if [ -f /usr/local/share/ca-certificates/forcepoint-ca.crt ]; then
+    export NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/forcepoint-ca.crt
+fi

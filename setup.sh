@@ -744,6 +744,39 @@ install_pi_coding_agent() {
 }
 
 #===============================================================================
+# Enterprise Certificates (optional)
+#===============================================================================
+
+install_enterprise_certs() {
+    # Check if already installed
+    if [ -f /usr/local/share/ca-certificates/forcepoint-ca.crt ] && \
+       [ -f /usr/local/share/ca-certificates/forcepoint.crt ]; then
+        success "Forcepoint enterprise certificates already installed"
+        return
+    fi
+
+    log "Enterprise SSL inspection detected (Forcepoint)."
+    read -rp "Install Forcepoint enterprise SSL certificates? [y/N]: " install_certs
+    if [[ ! "$install_certs" =~ ^[Yy]$ ]]; then
+        warn "Skipping enterprise certificate installation"
+        return
+    fi
+
+    log "Installing Forcepoint enterprise certificates..."
+
+    # Copy certs to system CA directory
+    $SUDO cp "$SCRIPT_DIR/certs/forcepoint-ca.crt" /usr/local/share/ca-certificates/forcepoint-ca.crt
+    $SUDO cp "$SCRIPT_DIR/certs/forcepoint.crt" /usr/local/share/ca-certificates/forcepoint.crt
+
+    # Rebuild system CA bundle (creates symlinks in /etc/ssl/certs/ and
+    # appends to /etc/ssl/certs/ca-certificates.crt)
+    $SUDO update-ca-certificates
+
+    success "Forcepoint certificates installed to system CA store"
+    ENTERPRISE_CERTS_INSTALLED=true
+}
+
+#===============================================================================
 # Git Configuration
 #===============================================================================
 
@@ -975,18 +1008,21 @@ main() {
     # Phase 6: GNOME extensions (desktop)
     install_pop_shell
 
-    # Phase 7: Configuration
+    # Phase 7: Enterprise certificates (optional)
+    install_enterprise_certs
+
+    # Phase 8: Configuration
     configure_git
     deploy_configs
     deploy_desktop_configs
 
-    # Phase 8: Default terminal
+    # Phase 10: Default terminal
     set_default_terminal
 
-    # Phase 9: Neovim plugin setup
+    # Phase 11: Neovim plugin setup
     setup_neovim_plugins
 
-    # Phase 10: Verification
+    # Phase 12: Verification
     log ""
     log "Verifying installations..."
     local common_tools="vim nvim just bat delta starship et jq tmux uv fzf yazi btop zoxide"
@@ -1035,6 +1071,30 @@ main() {
         log "Tiling WM: Pop Shell (GNOME extension)"
         log "Docker: log out and back in for group membership to take effect"
     fi
+
+    if [ "${ENTERPRISE_CERTS_INSTALLED:-}" = "true" ]; then
+        log ""
+        log "╔══════════════════════════════════════════════════════════════╗"
+        log "║  FIREFOX CERTIFICATE CONFIGURATION (manual step required)   ║"
+        log "╠══════════════════════════════════════════════════════════════╣"
+        log "║                                                            ║"
+        log "║  Firefox does not automatically use system CA certificates. ║"
+        log "║  To fix SSL errors on enterprise-inspected sites:           ║"
+        log "║                                                            ║"
+        log "║  1. Open Firefox                                           ║"
+        log "║  2. Navigate to:  about:config                             ║"
+        log "║  3. Accept the risk warning                                ║"
+        log "║  4. Search for:   security.enterprise_roots.enabled        ║"
+        log "║  5. Set it to:    true  (double-click to toggle)           ║"
+        log "║  6. Restart Firefox                                        ║"
+        log "║                                                            ║"
+        log "║  This tells Firefox to import CAs from the system store,   ║"
+        log "║  including the Forcepoint certificates just installed.     ║"
+        log "║                                                            ║"
+        log "╚══════════════════════════════════════════════════════════════╝"
+    fi
+
+    log ""
     log "You can now delete this directory: rm -rf $SCRIPT_DIR"
 }
 
