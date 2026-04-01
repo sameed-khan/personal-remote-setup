@@ -24,6 +24,12 @@ noremap <expr> k (v:count? 'k': 'gk')
 " Nice editor things
 syntax on
 set relativenumber
+
+" Use system clipboard for all yank/delete/paste (requires +clipboard)
+" On Ubuntu, install vim-gtk3 for clipboard support
+if has('clipboard')
+    set clipboard=unnamedplus
+endif
 set showmatch
 set ruler
 set smarttab

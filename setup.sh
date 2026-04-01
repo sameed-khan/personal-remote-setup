@@ -1,9 +1,13 @@
 #!/bin/bash
 #===============================================================================
-# Remote Server Setup Script
+# Machine Setup Script
 # Author: Sameed Khan
 #
-# Usage: git clone <repo> && cd <repo> && ./setup.sh
+# Supports two modes:
+#   ./setup.sh                  # remote server (headless)
+#   ./setup.sh --mode desktop   # desktop workstation (GUI)
+#
+# Usage: git clone <repo> && cd <repo> && ./setup.sh [--mode desktop]
 # Idempotent: safe to run multiple times.
 # After setup completes, you can delete this directory.
 #
@@ -14,6 +18,34 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+#===============================================================================
+# Mode Selection
+#===============================================================================
+
+SETUP_MODE="remote"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --mode)
+            SETUP_MODE="$2"
+            shift 2
+            ;;
+        --mode=*)
+            SETUP_MODE="${1#*=}"
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Usage: $0 [--mode remote|desktop]"
+            exit 1
+            ;;
+    esac
+done
+
+if [[ "$SETUP_MODE" != "remote" && "$SETUP_MODE" != "desktop" ]]; then
+    echo "Invalid mode: $SETUP_MODE (must be 'remote' or 'desktop')"
+    exit 1
+fi
 
 #===============================================================================
 # Logging
@@ -52,7 +84,31 @@ detect_platform() {
         exit 1
     fi
 
-    log "Platform: $ARCH, Package manager: $PKG_MANAGER"
+    # Detect display server (for desktop mode)
+    HAS_DISPLAY="false"
+    if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
+        HAS_DISPLAY="true"
+    fi
+
+    # Detect distro
+    DISTRO_ID=""
+    if [ -f /etc/os-release ]; then
+        DISTRO_ID=$(. /etc/os-release && echo "$ID")
+    fi
+
+    log "Platform: $ARCH, Package manager: $PKG_MANAGER, Mode: $SETUP_MODE"
+    if [ "$SETUP_MODE" = "desktop" ]; then
+        log "Distro: ${DISTRO_ID:-unknown}, Display server: $HAS_DISPLAY"
+        if [ "$DISTRO_ID" != "ubuntu" ]; then
+            warn "Desktop mode is tested on Ubuntu. Some installs (Ghostty .deb,"
+            warn "Pop Shell, GNOME extensions) may need manual adjustments on $DISTRO_ID."
+            read -rp "Continue anyway? [y/N]: " continue_anyway
+            if [[ ! "$continue_anyway" =~ ^[Yy]$ ]]; then
+                error "Aborted. Run with --mode remote for OS-agnostic setup."
+                exit 1
+            fi
+        fi
+    fi
 }
 
 # Detect if we need sudo for system packages
@@ -71,6 +127,11 @@ fi
 
 BAT_VERSION="0.26.1"
 DELTA_VERSION="0.18.2"
+ZELLIJ_VERSION="0.43.1"
+ZOXIDE_VERSION="0.9.9"
+NVM_VERSION="0.40.3"
+NODE_VERSION="lts/*"
+GHOSTTY_PPA_DEB_URL="https://github.com/maan2003/ghostty-ubuntu/releases/latest/download/ghostty_amd64.deb"
 
 #===============================================================================
 # System Package Installation
@@ -83,7 +144,9 @@ install_system_packages() {
         apt)
             $SUDO apt-get update -qq
             $SUDO apt-get install -y \
-                build-essential cmake curl wget git fd-find ripgrep jq tmux libfuse2 unzip
+                build-essential cmake curl wget git fd-find ripgrep jq tmux \
+                libfuse2t64 unzip zip tar ninja-build autoconf automake libtool \
+                python3 python3-venv tree pkg-config libssl-dev
             # Create fd symlink if needed (Ubuntu installs as fdfind)
             if command -v fdfind &>/dev/null && ! command -v fd &>/dev/null; then
                 mkdir -p "$HOME/.local/bin"
@@ -92,22 +155,97 @@ install_system_packages() {
             ;;
         dnf)
             $SUDO dnf install -y \
-                gcc gcc-c++ make cmake curl wget git fd-find ripgrep jq tmux fuse-libs unzip
+                gcc gcc-c++ make cmake curl wget git fd-find ripgrep jq tmux \
+                fuse-libs unzip tree pkg-config openssl-devel
             ;;
         pacman)
             $SUDO pacman -S --needed --noconfirm \
-                base-devel cmake curl wget git fd ripgrep jq tmux fuse2 unzip
+                base-devel cmake curl wget git fd ripgrep jq tmux fuse2 unzip \
+                tree pkg-config openssl
             ;;
         zypper)
             $SUDO zypper install -y \
-                gcc gcc-c++ make cmake curl wget git fd ripgrep jq tmux libfuse2 unzip
+                gcc gcc-c++ make cmake curl wget git fd ripgrep jq tmux \
+                libfuse2 unzip tree pkg-config libopenssl-devel
             ;;
         brew)
-            brew install cmake curl wget git fd ripgrep jq tmux unzip
+            brew install cmake curl wget git fd ripgrep jq tmux unzip tree \
+                pkg-config openssl
             ;;
     esac
 
     success "System packages installed"
+}
+
+install_desktop_system_packages() {
+    if [ "$SETUP_MODE" != "desktop" ]; then return; fi
+    log "Installing desktop system packages..."
+
+    case "$PKG_MANAGER" in
+        apt)
+            $SUDO apt-get install -y \
+                wl-clipboard xclip gnome-tweaks gnome-shell-extension-prefs \
+                protobuf-compiler libprotobuf-dev node-typescript
+            ;;
+        dnf)
+            $SUDO dnf install -y \
+                wl-clipboard xclip gnome-tweaks gnome-extensions-app \
+                protobuf-compiler protobuf-devel
+            ;;
+        pacman)
+            $SUDO pacman -S --needed --noconfirm \
+                wl-clipboard xclip gnome-tweaks gnome-shell-extensions \
+                protobuf
+            ;;
+        zypper)
+            $SUDO zypper install -y \
+                wl-clipboard xclip gnome-tweaks gnome-shell-extensions \
+                protobuf-devel
+            ;;
+        brew)
+            warn "Desktop packages not applicable for macOS brew"
+            ;;
+    esac
+
+    success "Desktop system packages installed"
+}
+
+#===============================================================================
+# Vim Installation
+#===============================================================================
+
+install_vim() {
+    # Desktop mode: install vim-gtk3 for +clipboard support
+    # Remote mode: install plain vim
+    if [ "$SETUP_MODE" = "desktop" ]; then
+        if vim --version 2>/dev/null | grep -q '+clipboard'; then
+            success "vim already installed with clipboard support"
+            return
+        fi
+        log "Installing vim-gtk3 (with clipboard support)..."
+        case "$PKG_MANAGER" in
+            apt)    $SUDO apt-get install -y vim-gtk3 ;;
+            dnf)    $SUDO dnf install -y vim-X11 ;;
+            pacman) $SUDO pacman -S --needed --noconfirm gvim ;;
+            zypper) $SUDO zypper install -y gvim ;;
+            brew)   brew install vim ;;
+        esac
+        success "vim-gtk3 installed (with +clipboard)"
+    else
+        if command -v vim &>/dev/null; then
+            success "vim already installed"
+            return
+        fi
+        log "Installing vim..."
+        case "$PKG_MANAGER" in
+            apt)    $SUDO apt-get install -y vim ;;
+            dnf)    $SUDO dnf install -y vim ;;
+            pacman) $SUDO pacman -S --needed --noconfirm vim ;;
+            zypper) $SUDO zypper install -y vim ;;
+            brew)   brew install vim ;;
+        esac
+        success "vim installed"
+    fi
 }
 
 #===============================================================================
@@ -233,6 +371,244 @@ install_et() {
     success "Eternal Terminal installed"
 }
 
+install_btop() {
+    if command -v btop &>/dev/null; then
+        success "btop already installed: $(btop --version 2>&1 | head -1)"
+        return
+    fi
+    log "Installing btop..."
+    case "$PKG_MANAGER" in
+        apt)    $SUDO apt-get install -y btop ;;
+        dnf)    $SUDO dnf install -y btop ;;
+        pacman) $SUDO pacman -S --needed --noconfirm btop ;;
+        zypper) $SUDO zypper install -y btop ;;
+        brew)   brew install btop ;;
+    esac
+    success "btop installed"
+}
+
+#===============================================================================
+# Desktop Tool Installers (only in desktop mode)
+#===============================================================================
+
+install_zellij() {
+    if [ "$SETUP_MODE" != "desktop" ]; then return; fi
+    if command -v zellij &>/dev/null; then
+        success "zellij already installed: $(zellij --version)"
+        return
+    fi
+    log "Installing zellij..."
+    local tmp
+    tmp=$(mktemp -d)
+    local zellij_arch="x86_64"
+    [ "$ARCH" = "aarch64" ] && zellij_arch="aarch64"
+    wget -q -O "$tmp/zellij.tar.gz" \
+        "https://github.com/zellij-org/zellij/releases/download/v${ZELLIJ_VERSION}/zellij-${zellij_arch}-unknown-linux-musl.tar.gz"
+    tar -xzf "$tmp/zellij.tar.gz" -C "$tmp"
+    mkdir -p "$HOME/.local/bin"
+    mv "$tmp/zellij" "$HOME/.local/bin/zellij"
+    chmod +x "$HOME/.local/bin/zellij"
+    rm -rf "$tmp"
+    success "zellij installed: $(zellij --version)"
+}
+
+install_zoxide() {
+    if command -v zoxide &>/dev/null; then
+        success "zoxide already installed: $(zoxide --version)"
+        return
+    fi
+    log "Installing zoxide..."
+    local tmp
+    tmp=$(mktemp -d)
+    local zoxide_arch="x86_64"
+    [ "$ARCH" = "aarch64" ] && zoxide_arch="aarch64"
+    wget -q -O "$tmp/zoxide.tar.gz" \
+        "https://github.com/ajeetdsouza/zoxide/releases/download/v${ZOXIDE_VERSION}/zoxide-${ZOXIDE_VERSION}-${zoxide_arch}-unknown-linux-musl.tar.gz"
+    tar -xzf "$tmp/zoxide.tar.gz" -C "$tmp"
+    mkdir -p "$HOME/.local/bin"
+    mv "$tmp/zoxide" "$HOME/.local/bin/zoxide"
+    chmod +x "$HOME/.local/bin/zoxide"
+    rm -rf "$tmp"
+    success "zoxide installed: $(zoxide --version)"
+}
+
+install_ghostty() {
+    if [ "$SETUP_MODE" != "desktop" ]; then return; fi
+    if command -v ghostty &>/dev/null; then
+        success "ghostty already installed: $(ghostty --version 2>&1 | head -1)"
+        return
+    fi
+    if [ "$HAS_DISPLAY" != "true" ]; then
+        warn "[SKIP] No display server — skipping Ghostty install"
+        return
+    fi
+    log "Installing Ghostty..."
+    case "$PKG_MANAGER" in
+        apt)
+            local tmp
+            tmp=$(mktemp -d)
+            local deb_arch="amd64"
+            [ "$ARCH" = "aarch64" ] && deb_arch="arm64"
+            # Try the community PPA .deb build
+            wget -q -O "$tmp/ghostty.deb" \
+                "https://github.com/maan2003/ghostty-ubuntu/releases/latest/download/ghostty_${deb_arch}.deb" || {
+                warn "Failed to download Ghostty .deb — you may need to install manually"
+                warn "See: https://ghostty.org/docs/install"
+                rm -rf "$tmp"
+                return
+            }
+            $SUDO dpkg -i "$tmp/ghostty.deb" || $SUDO apt-get install -f -y
+            rm -rf "$tmp"
+            ;;
+        dnf)
+            $SUDO dnf copr enable -y pgdev/ghostty
+            $SUDO dnf install -y ghostty
+            ;;
+        pacman)
+            $SUDO pacman -S --needed --noconfirm ghostty
+            ;;
+        *)
+            warn "Ghostty: no automated install for $PKG_MANAGER — install manually"
+            warn "See: https://ghostty.org/docs/install"
+            return
+            ;;
+    esac
+    success "ghostty installed"
+}
+
+install_nerd_fonts() {
+    if [ "$SETUP_MODE" != "desktop" ]; then return; fi
+    local font_dir="$HOME/.local/share/fonts"
+    if fc-list 2>/dev/null | grep -qi "JetBrainsMono Nerd"; then
+        success "JetBrainsMono Nerd Font already installed"
+        return
+    fi
+    log "Installing JetBrainsMono Nerd Font..."
+    local tmp
+    tmp=$(mktemp -d)
+    wget -q -O "$tmp/JetBrainsMono.tar.xz" \
+        "https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.tar.xz"
+    mkdir -p "$font_dir"
+    tar -xJf "$tmp/JetBrainsMono.tar.xz" -C "$font_dir"
+    fc-cache -f "$font_dir" 2>/dev/null || true
+    rm -rf "$tmp"
+    success "JetBrainsMono Nerd Font installed"
+}
+
+install_pop_shell() {
+    if [ "$SETUP_MODE" != "desktop" ]; then return; fi
+    if [ "$HAS_DISPLAY" != "true" ]; then
+        warn "[SKIP] No display server — skipping Pop Shell install"
+        return
+    fi
+    local ext_dir="$HOME/.local/share/gnome-shell/extensions/pop-shell@system76.com"
+    if [ -d "$ext_dir" ]; then
+        success "Pop Shell already installed"
+        return
+    fi
+    log "Installing Pop Shell GNOME extension (building from source)..."
+    local tmp
+    tmp=$(mktemp -d)
+    git clone --depth 1 https://github.com/pop-os/shell.git "$tmp/pop-shell"
+    cd "$tmp/pop-shell"
+    make local-install 2>&1 || {
+        warn "Pop Shell build failed — you may need to install manually"
+        warn "See: https://github.com/pop-os/shell"
+        cd "$SCRIPT_DIR"
+        rm -rf "$tmp"
+        return
+    }
+    cd "$SCRIPT_DIR"
+    rm -rf "$tmp"
+
+    # Enable the extension
+    gnome-extensions enable pop-shell@system76.com 2>/dev/null || true
+
+    # Apply default Pop Shell settings
+    dconf write /org/gnome/shell/extensions/pop-shell/active-hint true
+    dconf write /org/gnome/shell/extensions/pop-shell/tile-by-default true
+
+    success "Pop Shell installed and enabled"
+}
+
+install_docker() {
+    if [ "$SETUP_MODE" != "desktop" ]; then return; fi
+    if command -v docker &>/dev/null; then
+        success "docker already installed: $(docker --version)"
+        return
+    fi
+    log "Installing Docker..."
+    case "$PKG_MANAGER" in
+        apt)
+            # Install using Docker's official convenience script
+            curl -fsSL https://get.docker.com | sh
+            # Add current user to docker group (takes effect on next login)
+            $SUDO usermod -aG docker "$USER" || true
+            ;;
+        dnf)
+            $SUDO dnf config-manager --add-repo https://download.docker.com/linux/fedora/docker-ce.repo
+            $SUDO dnf install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+            $SUDO systemctl enable --now docker
+            $SUDO usermod -aG docker "$USER" || true
+            ;;
+        pacman)
+            $SUDO pacman -S --needed --noconfirm docker docker-compose
+            $SUDO systemctl enable --now docker
+            $SUDO usermod -aG docker "$USER" || true
+            ;;
+        zypper)
+            $SUDO zypper install -y docker docker-compose
+            $SUDO systemctl enable --now docker
+            $SUDO usermod -aG docker "$USER" || true
+            ;;
+        brew)
+            brew install --cask docker
+            ;;
+    esac
+    success "Docker installed (log out and back in for group membership)"
+}
+
+set_default_terminal() {
+    if [ "$SETUP_MODE" != "desktop" ]; then return; fi
+    if [ "$HAS_DISPLAY" != "true" ]; then return; fi
+    if ! command -v ghostty &>/dev/null; then return; fi
+
+    log "Setting Ghostty as default terminal..."
+
+    # Method 1: update-alternatives (Debian/Ubuntu)
+    if command -v update-alternatives &>/dev/null; then
+        local ghostty_path
+        ghostty_path="$(command -v ghostty)"
+        $SUDO update-alternatives --install /usr/bin/x-terminal-emulator \
+            x-terminal-emulator "$ghostty_path" 50 2>/dev/null || true
+        $SUDO update-alternatives --set x-terminal-emulator "$ghostty_path" 2>/dev/null || true
+    fi
+
+    # Method 2: gsettings for GNOME
+    if command -v gsettings &>/dev/null; then
+        # Check if ghostty has a .desktop file
+        local desktop_file=""
+        for f in /usr/share/applications/com.mitchellh.ghostty.desktop \
+                 /usr/share/applications/ghostty.desktop \
+                 "$HOME/.local/share/applications/ghostty.desktop"; do
+            if [ -f "$f" ]; then
+                desktop_file="$(basename "$f")"
+                break
+            fi
+        done
+        if [ -n "$desktop_file" ]; then
+            # Set as preferred terminal in GNOME's xdg-terminal list
+            if [ -f /etc/xdg-terminals.list ] || [ -f "$HOME/.config/xdg-terminals.list" ]; then
+                if ! grep -q "$desktop_file" "$HOME/.config/xdg-terminals.list" 2>/dev/null; then
+                    echo "$desktop_file" > "$HOME/.config/xdg-terminals.list"
+                fi
+            fi
+        fi
+    fi
+
+    success "Ghostty set as default terminal"
+}
+
 #===============================================================================
 # User-Space Installers (no sudo needed)
 #===============================================================================
@@ -279,6 +655,92 @@ install_rust_and_yazi() {
     log "Installing yazi (this may take a few minutes)..."
     cargo install --force yazi-build
     success "yazi installed"
+}
+
+install_jj() {
+    if [ "$SETUP_MODE" != "desktop" ]; then return; fi
+    if command -v jj &>/dev/null; then
+        success "jj already installed: $(jj --version)"
+        return
+    fi
+    log "Installing Jujutsu (jj) via cargo (this may take a few minutes)..."
+    # Ensure cargo is available
+    if [ -f "$HOME/.cargo/env" ]; then
+        # shellcheck source=/dev/null
+        source "$HOME/.cargo/env"
+    fi
+    cargo install --locked jj-cli
+    success "jj installed: $(jj --version)"
+}
+
+install_nvm_and_node() {
+    if [ "$SETUP_MODE" != "desktop" ]; then return; fi
+    if [ -s "$HOME/.nvm/nvm.sh" ]; then
+        success "nvm already installed"
+    else
+        log "Installing nvm..."
+        curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_VERSION}/install.sh" | bash
+        success "nvm installed"
+    fi
+
+    # Source nvm for this session
+    export NVM_DIR="$HOME/.nvm"
+    # shellcheck source=/dev/null
+    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+    # Install Node.js LTS via nvm (ignore system node which may lack npm)
+    if nvm ls "$NODE_VERSION" &>/dev/null 2>&1 && command -v npm &>/dev/null; then
+        success "Node.js already installed via nvm: $(node --version)"
+    else
+        log "Installing Node.js (LTS) via nvm..."
+        nvm install "$NODE_VERSION"
+        nvm alias default "$NODE_VERSION"
+        nvm use default
+        success "Node.js installed: $(node --version)"
+    fi
+}
+
+install_pi_coding_agent() {
+    if [ "$SETUP_MODE" != "desktop" ]; then return; fi
+    # Ensure nvm/node are available
+    export NVM_DIR="$HOME/.nvm"
+    # shellcheck source=/dev/null
+    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+    if ! command -v node &>/dev/null; then
+        warn "Node.js not available — skipping pi-coding-agent install"
+        return
+    fi
+
+    if command -v pi &>/dev/null; then
+        success "pi-coding-agent already installed"
+    else
+        log "Installing pi-coding-agent and extensions..."
+        npm install -g @mariozechner/pi-coding-agent
+        success "pi-coding-agent installed"
+    fi
+
+    # Install core extensions (idempotent — npm won't reinstall if present)
+    log "Ensuring pi extensions are installed..."
+    local extensions=(
+        pi-subagents
+        pi-web-access
+        pi-exa-search
+        pi-interactive-shell
+        pi-mcp-adapter
+        pi-rewind
+        pi-agent-extensions
+        @yofriadi/pi-lsp
+        @zhafron/pi-mcp-tools
+        @javimolina/pi-palette
+    )
+    for ext in "${extensions[@]}"; do
+        if npm list -g "$ext" &>/dev/null; then
+            success "  $ext already installed"
+        else
+            npm install -g "$ext" && success "  $ext installed" || warn "  $ext failed to install"
+        fi
+    done
 }
 
 #===============================================================================
@@ -375,6 +837,74 @@ deploy_configs() {
     success "Bashrc source line added"
 }
 
+deploy_desktop_configs() {
+    if [ "$SETUP_MODE" != "desktop" ]; then return; fi
+    log "Deploying desktop configurations..."
+
+    # Ghostty config
+    if command -v ghostty &>/dev/null || [ "$HAS_DISPLAY" = "true" ]; then
+        mkdir -p "$HOME/.config/ghostty"
+        if [ -f "$HOME/.config/ghostty/config" ]; then
+            warn "Existing Ghostty config found"
+            read -rp "Overwrite? [y/N]: " overwrite
+            if [[ "$overwrite" =~ ^[Yy]$ ]]; then
+                cp "$SCRIPT_DIR/config/ghostty.config" "$HOME/.config/ghostty/config"
+                success "Ghostty config deployed"
+            else
+                warn "Skipping Ghostty config deployment"
+            fi
+        else
+            cp "$SCRIPT_DIR/config/ghostty.config" "$HOME/.config/ghostty/config"
+            success "Ghostty config deployed"
+        fi
+    fi
+
+    # Zellij config
+    if command -v zellij &>/dev/null; then
+        mkdir -p "$HOME/.config/zellij"
+        if [ -f "$HOME/.config/zellij/config.kdl" ]; then
+            warn "Existing Zellij config found"
+            read -rp "Overwrite? [y/N]: " overwrite
+            if [[ "$overwrite" =~ ^[Yy]$ ]]; then
+                cp "$SCRIPT_DIR/config/zellij.kdl" "$HOME/.config/zellij/config.kdl"
+                success "Zellij config deployed"
+            else
+                warn "Skipping Zellij config deployment"
+            fi
+        else
+            cp "$SCRIPT_DIR/config/zellij.kdl" "$HOME/.config/zellij/config.kdl"
+            success "Zellij config deployed"
+        fi
+    fi
+
+    # Jujutsu config
+    if command -v jj &>/dev/null; then
+        mkdir -p "$HOME/.config/jj"
+        if [ -f "$HOME/.config/jj/config.toml" ]; then
+            warn "Existing jj config found"
+            read -rp "Overwrite? [y/N]: " overwrite
+            if [[ "$overwrite" =~ ^[Yy]$ ]]; then
+                cp "$SCRIPT_DIR/config/jj.toml" "$HOME/.config/jj/config.toml"
+                success "jj config deployed"
+            else
+                warn "Skipping jj config deployment"
+            fi
+        else
+            cp "$SCRIPT_DIR/config/jj.toml" "$HOME/.config/jj/config.toml"
+            success "jj config deployed"
+        fi
+    fi
+
+    # Pop Shell config
+    if [ -d "$HOME/.local/share/gnome-shell/extensions/pop-shell@system76.com" ]; then
+        mkdir -p "$HOME/.config/pop-shell"
+        cp "$SCRIPT_DIR/config/pop-shell.json" "$HOME/.config/pop-shell/config.json"
+        success "Pop Shell config deployed"
+    fi
+
+    success "Desktop configurations deployed"
+}
+
 #===============================================================================
 # Post-Install: Neovim Plugins and LSP Servers
 #===============================================================================
@@ -398,7 +928,12 @@ setup_neovim_plugins() {
 #===============================================================================
 
 main() {
-    log "=== Remote Server Setup ==="
+    echo ""
+    if [ "$SETUP_MODE" = "desktop" ]; then
+        log "=== Desktop Workstation Setup ==="
+    else
+        log "=== Remote Server Setup ==="
+    fi
     log "Running as: $(whoami)"
 
     detect_platform
@@ -408,31 +943,56 @@ main() {
 
     # Phase 1: System packages (may require sudo)
     install_system_packages
+    install_desktop_system_packages
+    install_vim
 
-    # Phase 2: Binary tools
+    # Phase 2: Binary tools (common)
     install_just
     install_bat
     install_delta
     install_starship
     install_neovim
     install_et
+    install_btop
+    install_zoxide
 
-    # Phase 3: User-space tools
+    # Phase 3: Desktop-only binary tools
+    install_zellij
+    install_ghostty
+    install_nerd_fonts
+
+    # Phase 4: User-space tools (common)
     install_uv
     install_fzf
     install_rust_and_yazi
 
-    # Phase 4: Configuration
+    # Phase 5: Desktop-only user-space tools
+    install_jj
+    install_nvm_and_node
+    install_pi_coding_agent
+    install_docker
+
+    # Phase 6: GNOME extensions (desktop)
+    install_pop_shell
+
+    # Phase 7: Configuration
     configure_git
     deploy_configs
+    deploy_desktop_configs
 
-    # Phase 5: Neovim plugin setup
+    # Phase 8: Default terminal
+    set_default_terminal
+
+    # Phase 9: Neovim plugin setup
     setup_neovim_plugins
 
-    # Phase 6: Verification
+    # Phase 10: Verification
     log ""
     log "Verifying installations..."
-    for cmd in vim nvim just bat delta starship et jq tmux uv fzf yazi; do
+    local common_tools="vim nvim just bat delta starship et jq tmux uv fzf yazi btop zoxide"
+    local desktop_tools="zellij ghostty jj node docker"
+
+    for cmd in $common_tools; do
         if command -v "$cmd" &>/dev/null; then
             success "$cmd: $(command -v "$cmd")"
         else
@@ -440,11 +1000,41 @@ main() {
         fi
     done
 
+    if [ "$SETUP_MODE" = "desktop" ]; then
+        for cmd in $desktop_tools; do
+            if command -v "$cmd" &>/dev/null; then
+                success "$cmd: $(command -v "$cmd")"
+            else
+                warn "$cmd not found in PATH"
+            fi
+        done
+
+        # Check GNOME extensions
+        if gnome-extensions list 2>/dev/null | grep -q pop-shell; then
+            success "Pop Shell GNOME extension: installed"
+        else
+            warn "Pop Shell GNOME extension: not detected"
+        fi
+
+        # Check Nerd Font
+        if fc-list 2>/dev/null | grep -qi "JetBrainsMono Nerd"; then
+            success "JetBrainsMono Nerd Font: installed"
+        else
+            warn "JetBrainsMono Nerd Font: not detected"
+        fi
+    fi
+
     log ""
     log "=== Setup Complete ==="
+    log "Mode: $SETUP_MODE"
     log "Restart your shell or run: source ~/.bashrc"
     log "Default editor: vim (\$EDITOR=vim)"
     log "Neovim is available at: $(command -v nvim 2>/dev/null || echo 'not installed')"
+    if [ "$SETUP_MODE" = "desktop" ]; then
+        log "Terminal: Ghostty + Zellij"
+        log "Tiling WM: Pop Shell (GNOME extension)"
+        log "Docker: log out and back in for group membership to take effect"
+    fi
     log "You can now delete this directory: rm -rf $SCRIPT_DIR"
 }
 

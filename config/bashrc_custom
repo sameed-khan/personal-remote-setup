@@ -1,4 +1,6 @@
 # Custom Development Environment Configuration
+# ==============================================
+# Sourced from ~/.bashrc — works for both remote and desktop setups.
 
 # PATH additions
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/bin:$PATH"
@@ -25,6 +27,9 @@ alias gds='git diff --staged'
 alias gl='git log --oneline -20'
 alias gs='git status'
 
+# Zellij alias (desktop)
+alias zj='zellij'
+
 # Starship prompt
 eval "$(starship init bash)"
 
@@ -35,3 +40,13 @@ eval "$(starship init bash)"
 if command -v fdfind &> /dev/null && ! command -v fd &> /dev/null; then
     alias fd='fdfind'
 fi
+
+# zoxide — smart cd replacement (replaces cd command)
+if command -v zoxide &> /dev/null; then
+    eval "$(zoxide init --cmd cd bash)"
+fi
+
+# nvm — Node Version Manager
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
