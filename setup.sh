@@ -715,12 +715,12 @@ install_pi_coding_agent() {
     if command -v pi &>/dev/null; then
         success "pi-coding-agent already installed"
     else
-        log "Installing pi-coding-agent and extensions..."
+        log "Installing pi-coding-agent..."
         npm install -g @mariozechner/pi-coding-agent
         success "pi-coding-agent installed"
     fi
 
-    # Install core extensions (idempotent — npm won't reinstall if present)
+    # Install core extensions using pi install (idempotent)
     log "Ensuring pi extensions are installed..."
     local extensions=(
         pi-subagents
@@ -735,10 +735,11 @@ install_pi_coding_agent() {
         @javimolina/pi-palette
     )
     for ext in "${extensions[@]}"; do
-        if npm list -g "$ext" &>/dev/null; then
+        if pi list 2>/dev/null | grep -q "$ext"; then
             success "  $ext already installed"
         else
-            npm install -g "$ext" && success "  $ext installed" || warn "  $ext failed to install"
+            log "  Installing $ext..."
+            pi install "$ext" && success "  $ext installed" || warn "  $ext failed to install"
         fi
     done
 }
